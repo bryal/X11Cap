@@ -1,0 +1,7 @@
+[package]
+name = "x11cap"
+version = "0.0.1"
+authors = ["bryal <96.bryal@gmail.com>"]
+
+[dependencies]
+x11 = "*"
