@@ -174,45 +174,55 @@ fn test_shm() {
 		panic!("XShmAttach failed");
 	}
 
-	if XShmGetImage(display, root_window, image, root_x, root_y, AllPlanes) == 0 {
-		panic!("XShmGetImage failed");
-	}
-
-	println!("width {}, height {}, xoffset {}, format {}, byte_order {}, bitmap_unity {}, \
-		bitmap_bit_order {}, bitmap_pad {}, depth {}, bytes_per_line {}, bits_per_pixel {}, \
-		red_mask {:b}, green_mask {:b}, blue_mask {:b}",
-		image.width, image.height, image.xoffset, image.format, image.byte_order,
-		image.bitmap_unity, image.bitmap_bit_order, image.bitmap_pad, image.depth,
-		image.bytes_per_line, image.bits_per_pixel,
-		image.red_mask, image.green_mask, image.blue_mask);
-
-	// Factor to multiply color value with for it to fit in a u8
-	let (red_size, red_shift) = mask_size_and_shift(image.red_mask);
-	let (green_size, green_shift) = mask_size_and_shift(image.red_mask);
-	let (blue_size, blue_shift) = mask_size_and_shift(image.red_mask);
-	if !(red_size == 8 && green_size == 8 && blue_size == 8 && image.bits_per_pixel == 32) {
-		panic!("Bits per pixel is not 32 bits or Color channels are not 8 bits");
-	}
-
-	let raw_pixels = std::slice::from_raw_parts(image.data as *const u32,
-		image.height as usize * image.width as usize);
-
-	let mut pixel_buf = Vec::with_capacity(image.width as usize * image.height as usize);
-	for row in 0..image.height as usize {
-		for col in 0..image.width as usize {
-			// println!("{:?}", (row, col));
-			let pixel = raw_pixels[row * image.width as usize + col];
-			pixel_buf.push(RGB8{
-				r: ((pixel & image.red_mask as u32) >> red_shift) as u8,
-				g: ((pixel & image.green_mask as u32) >> green_shift) as u8,
-				b: ((pixel & image.blue_mask as u32) >> blue_shift) as u8,
-			});
+	for _ in 0..10 {
+		if XShmGetImage(display, root_window, image, root_x, root_y, AllPlanes) == 0 {
+			panic!("XShmGetImage failed");
 		}
-	}
 
-	println!("Tot color: {:?}", pixel_buf.iter()
-		.fold((0, 0, 0), |(r, g, b), p| (r + p.r as u64, g + p.g as u64, b + p.b as u64))
-	);
+		println!("width {}, height {}, xoffset {}, format {}, byte_order {}, bitmap_unity {}, \
+			bitmap_bit_order {}, bitmap_pad {}, depth {}, bytes_per_line {}, bits_per_pixel {}, \
+			red_mask {:b}, green_mask {:b}, blue_mask {:b}",
+			image.width, image.height, image.xoffset, image.format, image.byte_order,
+			image.bitmap_unity, image.bitmap_bit_order, image.bitmap_pad, image.depth,
+			image.bytes_per_line, image.bits_per_pixel,
+			image.red_mask, image.green_mask, image.blue_mask);
+
+		// Factor to multiply color value with for it to fit in a u8
+		let (red_size, red_shift) = mask_size_and_shift(image.red_mask);
+		let (green_size, green_shift) = mask_size_and_shift(image.red_mask);
+		let (blue_size, blue_shift) = mask_size_and_shift(image.red_mask);
+		let (red_mask, green_mask, blue_mask) = (image.red_mask, image.green_mask, image.blue_mask);
+		let masked_pixel_to_rgb: Box<Fn(c_ulong) -> RGB8> =
+			if red_size == 8 && green_size == 8 && blue_size == 8
+		{
+
+			Box::new(move |pixel| RGB8{
+				r: ((pixel & red_mask) >> red_shift) as u8,
+				g: ((pixel & green_mask) >> green_shift) as u8,
+				b: ((pixel & blue_mask) >> blue_shift) as u8,
+			})
+		} else {
+			let red_size_factor = 8.0 / red_size as f32;
+			let green_size_factor = 8.0 / green_size as f32;
+			let blue_size_factor = 8.0 / blue_size as f32;
+			Box::new(move |pixel| RGB8{
+				r: (((pixel & red_mask) >> red_shift) as f32 * red_size_factor) as u8,
+				g: (((pixel & green_mask) >> green_shift) as f32 * green_size_factor) as u8,
+				b: (((pixel & blue_mask) >> blue_shift) as f32 * blue_size_factor) as u8,
+			})
+		};
+
+		let mut pixel_buf = Vec::with_capacity(image.width as usize * image.height as usize);
+		for row in 0..image.height {
+			for col in 0..image.width {
+				pixel_buf.push(masked_pixel_to_rgb(xlib::XGetPixel(image, col, row)));
+			}
+		}
+
+		println!("Tot color: {:?}", pixel_buf.iter()
+			.fold((0, 0, 0), |(r, g, b), p| (r + p.r as u64, g + p.g as u64, b + p.b as u64))
+		);
+	}
 
 	XShmDetach(display, &mut shm_segment_info);
 	xlib::XDestroyImage(image);
