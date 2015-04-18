@@ -27,81 +27,34 @@
 extern crate x11;
 extern crate libc;
 
-use x11::xlib::{ Display, Bool, Visual, XImage, Drawable };
-use libc::{ c_int, c_char, c_uint, c_ushort, size_t, c_void, c_ulong, time_t, pid_t, uid_t, gid_t, mode_t };
+use libc::c_ulong;
 
-type ShmSeg = c_ulong;
+pub mod ffi;
 
-#[repr(C)]
-struct XShmSegmentInfo {
-	shmseg: ShmSeg,
-	shmid: c_int,
-	shmaddr: *mut c_char,
-	read_only: Bool,
+#[derive(Debug, Eq, PartialEq)]
+struct RGB8 {
+	r: u8,
+	g: u8,
+	b: u8,
 }
 
-#[link(name = "Xext")]
-extern "system" {
-	fn XShmQueryExtension(display: *mut Display) -> Bool;
-	fn XShmQueryVersion(display: *mut Display,
-		major_ver: *mut c_int, minor_ver: *mut c_int,
-		shared_pixmaps: *mut Bool) -> Bool;
-	fn XShmCreateImage(display: *mut Display, visual: *mut Visual,
-		depth: c_uint,
-		format: c_int, data: *mut c_char,
-		shminfo: *mut XShmSegmentInfo,
-		width: c_uint, height: c_uint) -> *mut XImage;
-	fn XShmAttach(display: *mut Display, shminfo: *mut XShmSegmentInfo) -> Bool;
-	fn XShmGetImage(display: *mut Display, drawable: Drawable, image: *mut XImage,
-		x: c_int, y: c_int,
-		plane_mask: c_ulong) -> Bool;
-	fn XShmDetach(display: *mut Display, shminfo: *mut XShmSegmentInfo) -> Bool;
+/// From a bitmask for a color in a pixel, calculate the color size in bits and the bitshift
+fn mask_size_and_shift(mut mask: c_ulong) -> (c_ulong, u16) {
+	let (mut bits, mut shift) = (0, 0);
+	let mut prev = 0;
+	for _ in 0..(c_ulong::max_value() as f64).log2() as u16 {
+		if mask & 1 == 1 {
+			bits += 1;
+			prev = 1;
+		} else if prev == 1 {
+			break;
+		} else {
+			shift += 1;
+		}
+		mask >>= 1;
+	}
+	(bits, shift)
 }
-
-type key_t = c_int;
-type shmatt_t = c_ulong;
-
-#[repr(C)]
-struct ipc_perm {
-	key: key_t,
-	uid: uid_t,
-	gid: gid_t,
-	cuid: uid_t,
-	cgid: gid_t,
-	mode: mode_t,
-	seq: c_ushort,
-}
-
-#[repr(C)]
-struct shmid_ds {
-	shm_perm: ipc_perm,
-	shm_segsz: size_t,
-	shm_atime: time_t,
-	shm_dtime: time_t,
-	shm_ctime: time_t,
-	shm_cpid: pid_t,
-	shm_lpid: pid_t,
-	shm_nattch: shmatt_t,
-	shm_unused2: *mut c_void,
-	shm_unused3: *mut c_void,
-}
-
-const IPC_PRIVATE: key_t = 0;
-const IPC_CREAT: c_int = 0o1000;
-const IPC_RMID: c_int = 0;
-
-extern "system" {
-	fn shmget(key: key_t, size: size_t, shm_flag: c_int) -> c_int;
-	fn shmat(shmid: c_int, shmaddr: *const c_void, shm_flag: c_int) -> *mut c_void;
-	fn shmdt(shmaddr: *const c_void) -> c_int;
-	fn shmctl(shmid: c_int, cmd: c_int, buf: *mut shmid_ds) -> c_int;
-}
-
-const XYBitmap: c_int = 0;
-const XYPixmap: c_int = 1;
-const ZPixmap: c_int = 2;
-
-const AllPlanes: c_ulong = 0;
 
 #[test]
 fn test_create_window() {
@@ -140,7 +93,7 @@ fn test_create_window() {
 	xlib::XMapWindow(display, window);
 	xlib::XFlush(display);
 
-	// std::thread::sleep_ms(1000);
+	std::thread::sleep_ms(1000);
 
 	// it is good programming practice to return system resources to the system...
 	xlib::XFreeGC(display, graphics_context);
@@ -154,6 +107,9 @@ fn test_create_window() {
 fn test_shm() {
 	use x11::xlib;
 	use std::{ ptr, mem };
+	use ffi::*;
+	use x11::xlib::Bool;
+	use libc::{ c_uint, size_t, c_char, c_void, c_int };
 
 	unsafe {
 
@@ -189,17 +145,18 @@ fn test_shm() {
 		root_pixel_depth);
 
 	let mut shm_segment_info = mem::zeroed();
-	let image = XShmCreateImage(display, xlib::XDefaultVisual(display, screen_num),
+	let image_ptr = XShmCreateImage(display, xlib::XDefaultVisual(display, screen_num),
 		xlib::XDefaultDepth(display, screen_num) as c_uint,
 		ZPixmap, ptr::null_mut(),
 		&mut shm_segment_info,
 		root_width, root_height);
-	if image.is_null() {
+	if image_ptr.is_null() {
 		panic!("XShmCreateImage returned null pointer");
 	}
+	let image = &mut *image_ptr;
 
 	shm_segment_info.shmid = shmget(IPC_PRIVATE,
-		((*image).bytes_per_line * (*image).height) as size_t,
+		(image.bytes_per_line * image.height) as size_t,
 		IPC_CREAT | 0777);
 	if shm_segment_info.shmid == -1 {
 		panic!("shmget failed");
@@ -209,7 +166,7 @@ fn test_shm() {
 	if shm_segment_info.shmaddr.is_null() {
 		panic!("XShmCreateImage returned null pointer");
 	}
-	(*image).data = shm_segment_info.shmaddr;
+	image.data = shm_segment_info.shmaddr;
 
 	shm_segment_info.read_only = 0;
 
@@ -221,7 +178,52 @@ fn test_shm() {
 		panic!("XShmGetImage failed");
 	}
 
+	println!("width {}, height {}, xoffset {}, format {}, byte_order {}, bitmap_unity {}, \
+		bitmap_bit_order {}, bitmap_pad {}, depth {}, bytes_per_line {}, bits_per_pixel {}, \
+		red_mask {:b}, green_mask {:b}, blue_mask {:b}",
+		image.width, image.height, image.xoffset, image.format, image.byte_order,
+		image.bitmap_unity, image.bitmap_bit_order, image.bitmap_pad, image.depth,
+		image.bytes_per_line, image.bits_per_pixel,
+		image.red_mask, image.green_mask, image.blue_mask);
+
+	// Factor to multiply color value with for it to fit in a u8
+	let (red_size, red_shift) = mask_size_and_shift(image.red_mask);
+	let (green_size, green_shift) = mask_size_and_shift(image.red_mask);
+	let (blue_size, blue_shift) = mask_size_and_shift(image.red_mask);
+	let (red_mask, green_mask, blue_mask) = (image.red_mask, image.green_mask, image.blue_mask);
+	let masked_pixel_to_rgb: Box<Fn(c_ulong) -> RGB8> =
+		if red_size == 8 && green_size == 8 && blue_size == 8
+	{
+
+		Box::new(move |pixel| RGB8{
+			r: ((pixel & red_mask) >> red_shift) as u8,
+			g: ((pixel & green_mask) >> green_shift) as u8,
+			b: ((pixel & blue_mask) >> blue_shift) as u8,
+		})
+	} else {
+		let red_size_factor = 8.0 / red_size as f32;
+		let green_size_factor = 8.0 / green_size as f32;
+		let blue_size_factor = 8.0 / blue_size as f32;
+		Box::new(move |pixel| RGB8{
+			r: (((pixel & red_mask) >> red_shift) as f32 * red_size_factor) as u8,
+			g: (((pixel & green_mask) >> green_shift) as f32 * green_size_factor) as u8,
+			b: (((pixel & blue_mask) >> blue_shift) as f32 * blue_size_factor) as u8,
+		})
+	};
+
+	let mut pixel_buf = Vec::with_capacity(image.width as usize * image.height as usize);
+	for row in 0..image.height {
+		for col in 0..image.width {
+			pixel_buf.push(masked_pixel_to_rgb(xlib::XGetPixel(image_ptr, row, col)));
+		}
+	}
+
+	println!("Tot color: {:?}", pixel_buf.iter()
+		.fold((0, 0, 0), |(r, g, b), p| (r + p.r as u64, g + p.g as u64, b + p.b as u64));
+	);
+
 	XShmDetach(display, &mut shm_segment_info);
+	xlib::XDestroyImage(image);
 	shmdt(shm_segment_info.shmaddr as *mut c_void);
 	shmctl(shm_segment_info.shmid, IPC_RMID, ptr::null_mut());
 

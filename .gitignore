@@ -11,3 +11,6 @@
 /target/
 
 Cargo.lock
+X.h
+Xlib.h
+XShm.h
