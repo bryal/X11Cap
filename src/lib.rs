@@ -56,52 +56,52 @@ fn mask_size_and_shift(mut mask: c_ulong) -> (c_ulong, u16) {
 	(bits, shift)
 }
 
-#[test]
-fn test_create_window() {
-	use x11::xlib;
-	use std::ptr;
+// #[test]
+// fn test_create_window() {
+// 	use x11::xlib;
+// 	use std::ptr;
 
-	unsafe {
+// 	unsafe {
 
-	// use the information from the environment variable DISPLAY to create the X connection:	
-	let display = match xlib::XOpenDisplay(ptr::null_mut()) {
-		null if null.is_null() => panic!("Unable to connect X server"),
-		display => display,
-	};
+// 	// use the information from the environment variable DISPLAY to create the X connection:	
+// 	let display = match xlib::XOpenDisplay(ptr::null_mut()) {
+// 		null if null.is_null() => panic!("Unable to connect X server"),
+// 		display => display,
+// 	};
 
-	let screen_num = xlib::XDefaultScreen(display);
-	let (black_pixel, white_pixel) = (xlib::XBlackPixel(display, screen_num),
-		xlib::XWhitePixel(display, screen_num));
+// 	let screen_num = xlib::XDefaultScreen(display);
+// 	let (black_pixel, white_pixel) = (xlib::XBlackPixel(display, screen_num),
+// 		xlib::XWhitePixel(display, screen_num));
 
-	// Once the display is initialized, create the window
-	let (x, y) = (0, 0);
-	let (width, height, border_width) = (400, 500, 5);
-	let (border_color, background_color) = (black_pixel, white_pixel);
-	let window = xlib::XCreateSimpleWindow(display,
-		xlib::XRootWindow(display, screen_num),
-		x, y,
-		width, height, border_width,
-		border_color, background_color);
+// 	// Once the display is initialized, create the window
+// 	let (x, y) = (0, 0);
+// 	let (width, height, border_width) = (400, 500, 5);
+// 	let (border_color, background_color) = (black_pixel, white_pixel);
+// 	let window = xlib::XCreateSimpleWindow(display,
+// 		xlib::XRootWindow(display, screen_num),
+// 		x, y,
+// 		width, height, border_width,
+// 		border_color, background_color);
 
-	// this routine determines which types of input are allowed in the input.
-	xlib::XSelectInput(display, window,
-		xlib::ExposureMask | xlib::ButtonPressMask | xlib::KeyPressMask);
+// 	// this routine determines which types of input are allowed in the input.
+// 	xlib::XSelectInput(display, window,
+// 		xlib::ExposureMask | xlib::ButtonPressMask | xlib::KeyPressMask);
 
-	// create the Graphics Context
-	let graphics_context = xlib::XCreateGC(display, window, 0, ptr::null_mut());
+// 	// create the Graphics Context
+// 	let graphics_context = xlib::XCreateGC(display, window, 0, ptr::null_mut());
 
-	xlib::XMapWindow(display, window);
-	xlib::XFlush(display);
+// 	xlib::XMapWindow(display, window);
+// 	xlib::XFlush(display);
 
-	std::thread::sleep_ms(1000);
+// 	std::thread::sleep_ms(1000);
 
-	// it is good programming practice to return system resources to the system...
-	xlib::XFreeGC(display, graphics_context);
-	xlib::XDestroyWindow(display, window);
-	xlib::XCloseDisplay(display);
+// 	// it is good programming practice to return system resources to the system...
+// 	xlib::XFreeGC(display, graphics_context);
+// 	xlib::XDestroyWindow(display, window);
+// 	xlib::XCloseDisplay(display);
 
-	}
-}
+// 	}
+// }
 
 #[test]
 fn test_shm() {
@@ -190,36 +190,28 @@ fn test_shm() {
 	let (red_size, red_shift) = mask_size_and_shift(image.red_mask);
 	let (green_size, green_shift) = mask_size_and_shift(image.red_mask);
 	let (blue_size, blue_shift) = mask_size_and_shift(image.red_mask);
-	let (red_mask, green_mask, blue_mask) = (image.red_mask, image.green_mask, image.blue_mask);
-	let masked_pixel_to_rgb: Box<Fn(c_ulong) -> RGB8> =
-		if red_size == 8 && green_size == 8 && blue_size == 8
-	{
+	if !(red_size == 8 && green_size == 8 && blue_size == 8 && image.bits_per_pixel == 32) {
+		panic!("Bits per pixel is not 32 bits or Color channels are not 8 bits");
+	}
 
-		Box::new(move |pixel| RGB8{
-			r: ((pixel & red_mask) >> red_shift) as u8,
-			g: ((pixel & green_mask) >> green_shift) as u8,
-			b: ((pixel & blue_mask) >> blue_shift) as u8,
-		})
-	} else {
-		let red_size_factor = 8.0 / red_size as f32;
-		let green_size_factor = 8.0 / green_size as f32;
-		let blue_size_factor = 8.0 / blue_size as f32;
-		Box::new(move |pixel| RGB8{
-			r: (((pixel & red_mask) >> red_shift) as f32 * red_size_factor) as u8,
-			g: (((pixel & green_mask) >> green_shift) as f32 * green_size_factor) as u8,
-			b: (((pixel & blue_mask) >> blue_shift) as f32 * blue_size_factor) as u8,
-		})
-	};
+	let raw_pixels = std::slice::from_raw_parts(image.data as *const u32,
+		image.height as usize * image.width as usize);
 
 	let mut pixel_buf = Vec::with_capacity(image.width as usize * image.height as usize);
-	for row in 0..image.height {
-		for col in 0..image.width {
-			pixel_buf.push(masked_pixel_to_rgb(xlib::XGetPixel(image_ptr, row, col)));
+	for row in 0..image.height as usize {
+		for col in 0..image.width as usize {
+			// println!("{:?}", (row, col));
+			let pixel = raw_pixels[row * image.width as usize + col];
+			pixel_buf.push(RGB8{
+				r: ((pixel & image.red_mask as u32) >> red_shift) as u8,
+				g: ((pixel & image.green_mask as u32) >> green_shift) as u8,
+				b: ((pixel & image.blue_mask as u32) >> blue_shift) as u8,
+			});
 		}
 	}
 
 	println!("Tot color: {:?}", pixel_buf.iter()
-		.fold((0, 0, 0), |(r, g, b), p| (r + p.r as u64, g + p.g as u64, b + p.b as u64));
+		.fold((0, 0, 0), |(r, g, b), p| (r + p.r as u64, g + p.g as u64, b + p.b as u64))
 	);
 
 	XShmDetach(display, &mut shm_segment_info);
