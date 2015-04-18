@@ -5,3 +5,4 @@ authors = ["bryal <96.bryal@gmail.com>"]
 
 [dependencies]
 x11 = "*"
+libc = "*"
