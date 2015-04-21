@@ -23,6 +23,7 @@
 //! Capture the screen with xlib
 
 #![allow(dead_code, non_upper_case_globals, non_camel_case_types)]
+#![feature(step_by)]
 
 extern crate x11;
 extern crate libc;
@@ -60,6 +61,7 @@ fn mask_size_and_shift(mut mask: c_ulong) -> (c_ulong, u16) {
 // fn test_create_window() {
 // 	use x11::xlib;
 // 	use std::ptr;
+// 	use ffi::*;
 
 // 	unsafe {
 
@@ -83,20 +85,36 @@ fn mask_size_and_shift(mut mask: c_ulong) -> (c_ulong, u16) {
 // 		width, height, border_width,
 // 		border_color, background_color);
 
-// 	// this routine determines which types of input are allowed in the input.
-// 	xlib::XSelectInput(display, window,
-// 		xlib::ExposureMask | xlib::ButtonPressMask | xlib::KeyPressMask);
-
-// 	// create the Graphics Context
-// 	let graphics_context = xlib::XCreateGC(display, window, 0, ptr::null_mut());
 
 // 	xlib::XMapWindow(display, window);
 // 	xlib::XFlush(display);
 
 // 	std::thread::sleep_ms(1000);
 
+// 	let image_ptr = xlib::XGetImage(display, window,
+// 		0, 0,
+// 		width, height,
+// 		AllPlanes, ZPixmap);
+// 	if image_ptr.is_null() {
+// 		panic!("XGetImage failed");
+// 	}
+// 	let image = &mut *image_ptr;
+
+// 	println!("width {}, height {}, depth {}, bytes_per_line {}, bits_per_pixel {}",
+// 		image.width, image.height, image.depth, image.bytes_per_line, image.bits_per_pixel);
+
+// 	for row in 0..image.height {
+// 		for col in 0..image.width {
+// 			let pixel = xlib::XGetPixel(image, col, row);
+// 			if pixel != 0 {
+// 				println!("{:b}", pixel);
+// 			}
+// 		}
+// 	}
+
+// 	std::thread::sleep_ms(1000);
+
 // 	// it is good programming practice to return system resources to the system...
-// 	xlib::XFreeGC(display, graphics_context);
 // 	xlib::XDestroyWindow(display, window);
 // 	xlib::XCloseDisplay(display);
 
@@ -104,12 +122,10 @@ fn mask_size_and_shift(mut mask: c_ulong) -> (c_ulong, u16) {
 // }
 
 #[test]
-fn test_shm() {
+fn test_capture() {
 	use x11::xlib;
-	use std::{ ptr, mem };
+	use std::ptr;
 	use ffi::*;
-	use x11::xlib::Bool;
-	use libc::{ c_uint, size_t, c_char, c_void, c_int };
 
 	unsafe {
 
@@ -118,12 +134,6 @@ fn test_shm() {
 	if display.is_null() {
 		panic!("Unable to connect X server");
 	}
-
-	println!("MIT-SHM available: {}", XShmQueryExtension(display) != 0);
-	let (mut major_ver, mut minor_ver) = (0, 0);
-	let mut shared_pixmaps: Bool = 0;
-	XShmQueryVersion(display, &mut major_ver, &mut minor_ver, &mut shared_pixmaps);
-	println!("SHM: major: {}, minor: {}, shared pixmaps: {}", major_ver, minor_ver, shared_pixmaps);
 
 	let screen_num = xlib::XDefaultScreen(display);
 	println!("Screen: {}", screen_num);
@@ -144,91 +154,42 @@ fn test_shm() {
 		root_window, (root_x, root_y), (root_width, root_height, root_border_width),
 		root_pixel_depth);
 
-	let mut shm_segment_info = mem::zeroed();
-	let image_ptr = XShmCreateImage(display, xlib::XDefaultVisual(display, screen_num),
-		xlib::XDefaultDepth(display, screen_num) as c_uint,
-		ZPixmap, ptr::null_mut(),
-		&mut shm_segment_info,
-		root_width, root_height);
+	println!("AllPlanes: {}, ZPixmap: {}\n", AllPlanes, ZPixmap);
+
+	let image_ptr = xlib::XGetImage(display, root_window,
+		0, 0,
+		root_width, root_height,
+		AllPlanes, ZPixmap);
 	if image_ptr.is_null() {
-		panic!("XShmCreateImage returned null pointer");
+		panic!("XGetImage failed");
 	}
 	let image = &mut *image_ptr;
 
-	shm_segment_info.shmid = shmget(IPC_PRIVATE,
-		(image.bytes_per_line * image.height) as size_t,
-		IPC_CREAT | 0777);
-	if shm_segment_info.shmid == -1 {
-		panic!("shmget failed");
-	}
-
-	shm_segment_info.shmaddr = shmat(shm_segment_info.shmid, ptr::null_mut(), 0) as *mut c_char;
-	if shm_segment_info.shmaddr.is_null() {
-		panic!("XShmCreateImage returned null pointer");
-	}
-	image.data = shm_segment_info.shmaddr;
-
-	shm_segment_info.read_only = 0;
-
-	if XShmAttach(display, &mut shm_segment_info) == 0 {
-		panic!("XShmAttach failed");
-	}
-
-	for _ in 0..10 {
-		if XShmGetImage(display, root_window, image, root_x, root_y, AllPlanes) == 0 {
-			panic!("XShmGetImage failed");
+	println!("width {}, height {}, depth {}, bytes_per_line {}, bits_per_pixel {}",
+		image.width, image.height, image.depth, image.bytes_per_line, image.bits_per_pixel);
+	
+	let mut pixel_buf = Vec::with_capacity((image.height as usize * image.width as usize) / 9);
+	for y in (0..image.height).step_by(3) {
+		for x in (0..image.width).step_by(3) {
+			let mut color = xlib::XColor{ pixel: xlib::XGetPixel(image_ptr, x, y),
+				red: 0, green: 0, blue: 0,
+				flags: 0, pad: 0,
+			};
+			xlib::XQueryColor(display, xlib::XDefaultColormap(display, screen_num), &mut color);
+			pixel_buf.push(RGB8{
+				r: (color.red / 256) as u8,
+				g: (color.green / 256) as u8,
+				b: (color.blue / 256) as u8
+			});
 		}
-
-		println!("width {}, height {}, xoffset {}, format {}, byte_order {}, bitmap_unity {}, \
-			bitmap_bit_order {}, bitmap_pad {}, depth {}, bytes_per_line {}, bits_per_pixel {}, \
-			red_mask {:b}, green_mask {:b}, blue_mask {:b}",
-			image.width, image.height, image.xoffset, image.format, image.byte_order,
-			image.bitmap_unity, image.bitmap_bit_order, image.bitmap_pad, image.depth,
-			image.bytes_per_line, image.bits_per_pixel,
-			image.red_mask, image.green_mask, image.blue_mask);
-
-		// Factor to multiply color value with for it to fit in a u8
-		let (red_size, red_shift) = mask_size_and_shift(image.red_mask);
-		let (green_size, green_shift) = mask_size_and_shift(image.red_mask);
-		let (blue_size, blue_shift) = mask_size_and_shift(image.red_mask);
-		let (red_mask, green_mask, blue_mask) = (image.red_mask, image.green_mask, image.blue_mask);
-		let masked_pixel_to_rgb: Box<Fn(c_ulong) -> RGB8> =
-			if red_size == 8 && green_size == 8 && blue_size == 8
-		{
-
-			Box::new(move |pixel| RGB8{
-				r: ((pixel & red_mask) >> red_shift) as u8,
-				g: ((pixel & green_mask) >> green_shift) as u8,
-				b: ((pixel & blue_mask) >> blue_shift) as u8,
-			})
-		} else {
-			let red_size_factor = 8.0 / red_size as f32;
-			let green_size_factor = 8.0 / green_size as f32;
-			let blue_size_factor = 8.0 / blue_size as f32;
-			Box::new(move |pixel| RGB8{
-				r: (((pixel & red_mask) >> red_shift) as f32 * red_size_factor) as u8,
-				g: (((pixel & green_mask) >> green_shift) as f32 * green_size_factor) as u8,
-				b: (((pixel & blue_mask) >> blue_shift) as f32 * blue_size_factor) as u8,
-			})
-		};
-
-		let mut pixel_buf = Vec::with_capacity(image.width as usize * image.height as usize);
-		for row in 0..image.height {
-			for col in 0..image.width {
-				pixel_buf.push(masked_pixel_to_rgb(xlib::XGetPixel(image, col, row)));
-			}
-		}
-
-		println!("Tot color: {:?}", pixel_buf.iter()
-			.fold((0, 0, 0), |(r, g, b), p| (r + p.r as u64, g + p.g as u64, b + p.b as u64))
-		);
 	}
 
-	XShmDetach(display, &mut shm_segment_info);
-	xlib::XDestroyImage(image);
-	shmdt(shm_segment_info.shmaddr as *mut c_void);
-	shmctl(shm_segment_info.shmid, IPC_RMID, ptr::null_mut());
+	let n_pixels = (image.height as u64 * image.width as u64) / 9;
+	let (r_tot, g_tot, b_tot) = pixel_buf.iter()
+		.fold((0, 0, 0), |(r, g, b), p| (r + p.r as u64, g + p.g as u64, b + p.b as u64));
+	println!("Avg color: {:?}", (r_tot/n_pixels, g_tot/n_pixels, b_tot/n_pixels));
 
+	xlib::XFree(image_ptr as *mut _);
 	xlib::XCloseDisplay(display);
 
 	}
