@@ -2,6 +2,12 @@
 name = "x11cap"
 version = "0.1.0"
 authors = ["bryal <96.bryal@gmail.com>"]
+description = "Screen capture with X11 in Rust"
+repository = "https://github.com/bryal/X11Cap"
+documentation = "http://bryal.github.io/X11Cap/x11cap/"
+readme = "README.md"
+keywords = ["X11", "X", "screen", "record", "capture"]
+license = "MIT"
 
 [dependencies]
 x11 = "*"
