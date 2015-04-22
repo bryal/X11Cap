@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["XF86VidModeModeInfo",""]],"fn":[["XF86VidModeGetAllModeLines",""],["XF86VidModeSetViewPort",""],["XF86VidModeSwitchToMode",""]]});

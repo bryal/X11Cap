@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["Capturer",""],["RGB8",""]],"mod":[["ffi","FFI bindings for functions related to SHM, shared memory"]],"enum":[["CaptureError","Possible errors when capturing"],["Display",""],["Screen",""],["Window",""]]});
