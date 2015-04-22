@@ -29,8 +29,9 @@ extern crate x11;
 extern crate libc;
 
 use ffi::*;
-use x11::xlib::{ self, Display, Window };
-use libc::{ c_ulong, c_int };
+use x11::xlib;
+use libc::c_int;
+use std::ffi::CString;
 use std::ptr::{ self, Unique };
 use std::slice;
 
@@ -44,52 +45,76 @@ pub struct RGB8 {
 	b: u8,
 }
 
-/// From a bitmask for a color in a pixel, calculate the color size in bits and the bitshift
-fn mask_size_and_shift(mut mask: c_ulong) -> (c_ulong, u16) {
-	let (mut bits, mut shift) = (0, 0);
-	let mut prev = 0;
-	for _ in 0..(c_ulong::max_value() as f64).log2() as u16 {
-		if mask & 1 == 1 {
-			bits += 1;
-			prev = 1;
-		} else if prev == 1 {
-			break;
-		} else {
-			shift += 1;
-		}
-		mask >>= 1;
-	}
-	(bits, shift)
+pub enum Display {
+	Address(&'static str),
+	Default
 }
 
-struct Desktop {
-	display: Unique<Display>,
-	window: Window,
+#[derive(Clone, Copy)]
+pub enum Screen {
+	Specific(c_int),
+	Default
+}
+
+#[derive(Clone, Copy)]
+pub enum Window {
+	Window(xlib::Window),
+	Desktop
+}
+
+struct WindowConnection {
+	display: Unique<xlib::Display>,
+	window: xlib::Window,
 	width: u32, height: u32,
 }
-impl Desktop {
-	fn new(display: Unique<Display>, screen: c_int) -> Desktop {
-		let mut root_window = 0;
-		let (mut root_x, mut root_y) = (0, 0);
-		let (mut root_width, mut root_height, mut root_border_width) = (0, 0, 0);
-		let mut root_pixel_depth = 0;
-		if unsafe { xlib::XGetGeometry(*display, xlib::XRootWindow(*display, screen),
-			&mut root_window,
-			&mut root_x, &mut root_y,
-			&mut root_width, &mut root_height, &mut root_border_width,
-			&mut root_pixel_depth) == 0 }
-		{
-			panic!("XGetGeometry failed");
-		}
+impl WindowConnection {
+	fn new(display: Display, screen: Screen, window: Window) -> Result<WindowConnection, ()> {
+		let display_ptr = unsafe {
+			Unique::new(xlib::XOpenDisplay(if let Display::Address(address) = display {
+				match CString::new(address) {
+					Ok(s) => s.as_ptr(),
+					Err(_) => return Err(())
+				}
+			} else {
+				ptr::null()
+			}))
+		};
 
-		Desktop{
-			display: display,
-			window: root_window,
-			width: root_width, height: root_height,
+		if !display_ptr.is_null() {
+			let screen_num = if let Screen::Specific(n) = screen {
+				n
+			} else {
+				unsafe { xlib::XDefaultScreen(*display_ptr) }
+			};
+
+			let mut window_id = if let Window::Window(id) = window {
+				id
+			} else {
+				unsafe { xlib::XRootWindow(*display_ptr, screen_num) }
+			};
+
+			let (mut window_width, mut window_height) = (0, 0);
+
+			if unsafe { xlib::XGetGeometry(*display_ptr, window_id,
+				&mut window_id,
+				&mut 0, &mut 0,
+				&mut window_width, &mut window_height, &mut 0,
+				&mut 0) != 0
+			}{
+				Ok(WindowConnection{
+					display: display_ptr,
+					window: window_id,
+					width: window_width, height: window_height,
+				})
+			} else {
+				Err(())
+			}
+		} else {
+			Err(())
 		}
 	}
 }
-impl Drop for Desktop {
+impl Drop for WindowConnection {
 	fn drop(&mut self) {
 		unsafe {
 			xlib::XCloseDisplay(*self.display);
@@ -97,57 +122,72 @@ impl Drop for Desktop {
 	}
 }
 
+/// Possible errors when capturing
+#[derive(Debug)]
+pub enum CaptureError {
+	Fail(&'static str),
+}
+
 pub struct Capturer {
-	desktop: Desktop,
+	screen: Screen,
+	window_conn: WindowConnection,
 }
 impl Capturer {
-	pub fn new() -> Capturer {
-		// use the information from the environment variable DISPLAY to create the X connection:	
-		let display = unsafe { Unique::new(xlib::XOpenDisplay(ptr::null_mut())) };
-		if display.is_null() {
-			panic!("Unable to connect X server");
+	pub fn new(screen: Screen) -> Result<Capturer, ()> {
+		match WindowConnection::new(Display::Default, screen, Window::Desktop) {
+			Ok(conn) => Ok(Capturer{ screen: screen, window_conn: conn }),
+			Err(_) => Err(()),
 		}
-
-		
-		let screen = unsafe { xlib::XDefaultScreen(*display) };
-		Capturer{ desktop: Desktop::new(display, screen) }
 	}
 
-	pub fn capture_frame(&mut self) -> (Vec<RGB8>, (u32, u32)) {
-		let image_ptr = unsafe { xlib::XGetImage(*self.desktop.display, self.desktop.window,
+	fn connect(&mut self) -> Result<(), ()> {
+		match WindowConnection::new(Display::Default, self.screen, Window::Desktop) {
+			Ok(conn) => {
+				self.window_conn = conn;
+				Ok(())
+			},
+			Err(_) => Err(()),
+		}	
+	}
+
+	pub fn capture_frame(&mut self) -> Result<(Vec<RGB8>, (u32, u32)), CaptureError> {
+		let image_ptr = unsafe { xlib::XGetImage(*self.window_conn.display, self.window_conn.window,
 			0, 0,
-			self.desktop.width, self.desktop.height,
+			self.window_conn.width, self.window_conn.height,
 			AllPlanes, ZPixmap) };
-		if image_ptr.is_null() {
-			panic!("XGetImage failed");
-		}
-		let image = unsafe { &mut *image_ptr };
 
-		println!("w, h: {:?}; pad: {}; bpl: {}", (image.width, image.height), image.bitmap_pad, image.bytes_per_line);
+		if !image_ptr.is_null() {
+			let image = unsafe { &mut *image_ptr };
 
-		unsafe { if image.depth == 24 && image.bits_per_pixel == 32 &&
-			image.red_mask == 0xFF0000 && image.green_mask == 0xFF00 && image.blue_mask == 0xFF
-		{
-			// It's plain (RGB8 + padding)s in memory
-			let raw_img_data = slice::from_raw_parts(image.data as *mut (RGB8, u8),
-				image.width as usize * image.height as usize
-			).iter()
-				.map(|&(pixel, _)| pixel)
-				.collect();
+			unsafe { if image.depth == 24 && image.bits_per_pixel == 32 &&
+				image.red_mask == 0xFF0000 && image.green_mask == 0xFF00 && image.blue_mask == 0xFF
+			{
+				// It's plain (RGB8 + padding)s in memory
+				let raw_img_data = slice::from_raw_parts(image.data as *mut (RGB8, u8),
+					image.width as usize * image.height as usize
+				).iter()
+					.map(|&(pixel, _)| pixel)
+					.collect();
 
-			xlib::XFree(image_ptr as *mut _);
+				xlib::XFree(image_ptr as *mut _);
 
-			(raw_img_data, (image.width as u32, image.height as u32))
+				Ok((raw_img_data, (image.width as u32, image.height as u32)))
+			} else {
+				xlib::XFree(image_ptr as *mut _);
+
+				Err(CaptureError::Fail("WRONG LAYOUT"))
+			} }
 		} else {
-			xlib::XFree(image_ptr as *mut _);
-			panic!("WRONG LAYOUT")
-		} }
+			Err(CaptureError::Fail("XGetImage returned null pointer"))
+		}
 	}
 }
 
 #[test]
 fn test() {
-	let mut capturer = Capturer::new();
-	println!("Any non-black: {}", capturer.capture_frame().0.iter()
-		.any(|p| p.r != 0 || p.g != 0 || p.b != 0));
+	let mut capturer = Capturer::new(Screen::Default).unwrap();
+	for _ in 0..10 {
+		println!("Any non-black: {}", capturer.capture_frame().unwrap().0.iter()
+			.any(|p| p.r != 0 || p.g != 0 || p.b != 0));
+	}
 }
