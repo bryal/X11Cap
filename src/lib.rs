@@ -38,7 +38,7 @@ use std::slice;
 pub mod ffi;
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
-#[repr(C, packed)]
+#[repr(C)]
 pub struct RGB8 {
 	r: u8,
 	g: u8,
