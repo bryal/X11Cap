@@ -29,7 +29,7 @@ extern crate x11;
 extern crate libc;
 
 use ffi::*;
-use x11::xlib;
+use x11::{xlib, xrandr};
 use libc::c_int;
 use std::ffi::CString;
 use std::ptr::{self, Unique};
@@ -70,44 +70,47 @@ struct WindowConnection {
     height: u32,
 }
 impl WindowConnection {
-    fn new(display: Display, screen: Screen, window: Window) -> Result<WindowConnection, ()> {
-        let display_ptr = unsafe {
-            Unique::new(xlib::XOpenDisplay(if let Display::Address(address) = display {
-                match CString::new(address) {
-                    Ok(s) => s.as_ptr(),
-                    Err(_) => return Err(()),
-                }
-            } else {
-                ptr::null()
-            }))
+    unsafe fn new(display: Display,
+                  screen: Screen,
+                  window: Window)
+                  -> Result<WindowConnection, ()> {
+        let addr = if let Display::Address(address) = display {
+            match CString::new(address) {
+                Ok(s) => s.as_ptr(),
+                Err(_) => return Err(()),
+            }
+        } else {
+            ptr::null()
         };
+
+        let display_ptr = Unique::new(xlib::XOpenDisplay(addr));
 
         if !display_ptr.is_null() {
             let screen_num = if let Screen::Specific(n) = screen {
                 n
             } else {
-                unsafe { xlib::XDefaultScreen(*display_ptr) }
+                xlib::XDefaultScreen(*display_ptr)
             };
 
             let mut window_id = if let Window::Window(id) = window {
                 id
             } else {
-                unsafe { xlib::XRootWindow(*display_ptr, screen_num) }
+                xlib::XRootWindow(*display_ptr, screen_num)
             };
 
             let (mut window_width, mut window_height) = (0, 0);
 
-            if unsafe {
-                xlib::XGetGeometry(*display_ptr,
-                                   window_id,
-                                   &mut window_id,
-                                   &mut 0,
-                                   &mut 0,
-                                   &mut window_width,
-                                   &mut window_height,
-                                   &mut 0,
-                                   &mut 0) != 0
-            } {
+            let geo_result = xlib::XGetGeometry(*display_ptr,
+                                                window_id,
+                                                &mut window_id,
+                                                &mut 0,
+                                                &mut 0,
+                                                &mut window_width,
+                                                &mut window_height,
+                                                &mut 0,
+                                                &mut 0);
+
+            if geo_result != 0 {
                 Ok(WindowConnection {
                     display: display_ptr,
                     window: window_id,
@@ -136,6 +139,18 @@ pub enum CaptureError {
     Fail(&'static str),
 }
 
+/// Capture either a region of the total display area,
+/// or capture the output of a specific monitor
+pub enum CaptureSource {
+    Region {
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    },
+    Monitor(usize),
+}
+
 pub struct Capturer {
     window_conn: WindowConnection,
     x: i32,
@@ -144,13 +159,26 @@ pub struct Capturer {
     height: u32,
 }
 impl Capturer {
-    pub fn new(x: i32, y: i32, width: u32, height: u32) -> Result<Capturer, ()> {
-        match WindowConnection::new(Display::Default, Screen::Default, Window::Desktop) {
+    pub fn new(capture_src: CaptureSource) -> Result<Capturer, ()> {
+        match unsafe { WindowConnection::new(Display::Default, Screen::Default, Window::Desktop) } {
             Ok(conn) => {
+                let (x, y, w, h) = match capture_src {
+                    CaptureSource::Region { x, y, width, height } => (x, y, width, height),
+                    CaptureSource::Monitor(mon_i) => {
+                        let mut n_mons = 0;
+                        let mons = unsafe {
+                            xrandr::XRRGetMonitors(*conn.display, conn.window, 1, &mut n_mons)
+                        };
+                        let mons = unsafe { slice::from_raw_parts_mut(mons, n_mons as usize) };
+                        let mon = mons[mon_i];
+                        (mon.x, mon.y, mon.width as u32, mon.height as u32)
+                    }
+                };
+
                 Ok(Capturer {
                     window_conn: conn,
-                    width: width,
-                    height: height,
+                    width: w,
+                    height: h,
                     x: x,
                     y: y,
                 })

@@ -5,8 +5,9 @@ use x11cap::*;
 use shuteye::sleep;
 use std::time::Duration;
 
+
 fn main() {
-    let mut capturer = Capturer::new(1920, 0, 1920, 1080).unwrap();
+    let mut capturer = Capturer::new(CaptureSource::Monitor(0)).unwrap();
 
     loop {
         let ps = capturer.capture_frame().unwrap();
