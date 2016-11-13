@@ -159,7 +159,7 @@ impl Capturer {
         }
     }
 
-    pub fn capture_frame(&mut self) -> Result<(Vec<RGB8>, (u32, u32)), CaptureError> {
+    pub fn capture_frame(&mut self) -> Result<Vec<RGB8>, CaptureError> {
         let image_ptr = unsafe {
             xlib::XGetImage(*self.window_conn.display,
                             self.window_conn.window,
@@ -179,16 +179,15 @@ impl Capturer {
                    image.red_mask == 0xFF0000 && image.green_mask == 0xFF00 &&
                    image.blue_mask == 0xFF {
 
-                    let (width, height) = (image.width, image.height);
-
                     // It's plain (RGB8 + padding)s in memory
                     let raw_img_data = slice::from_raw_parts(image.data as *mut RGB8,
-                                                             width as usize * height as usize)
+                                                             image.width as usize *
+                                                             image.height as usize)
                         .to_vec();
 
                     xlib::XDestroyImage(image_ptr);
 
-                    Ok((raw_img_data, (width as u32, height as u32)))
+                    Ok(raw_img_data)
                 } else {
                     xlib::XDestroyImage(image_ptr as *mut _);
 
