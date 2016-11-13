@@ -23,7 +23,7 @@
 //! Capture the screen with xlib
 
 #![feature(unique)]
-#![allow(dead_code, non_upper_case_globals, non_camel_case_types)]
+#![allow(dead_code, non_upper_case_globals)]
 
 extern crate x11;
 extern crate libc;
@@ -38,7 +38,7 @@ use std::slice;
 pub mod ffi;
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
-#[repr(C, packed)]
+#[repr(C)]
 pub struct RGB8 {
     pub b: u8,
     pub g: u8,
