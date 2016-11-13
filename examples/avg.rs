@@ -15,7 +15,7 @@ fn main() {
 
         let (mut tot_r, mut tot_g, mut tot_b) = (0, 0, 0);
 
-        for RGB8 { r, g, b, .. } in ps.into_iter() {
+        for Bgr8 { r, g, b, .. } in ps.into_iter() {
             tot_r += r as u64;
             tot_g += g as u64;
             tot_b += b as u64;

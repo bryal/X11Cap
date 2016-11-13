@@ -39,7 +39,7 @@ pub mod ffi;
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 #[repr(C)]
-pub struct RGB8 {
+pub struct Bgr8 {
     pub b: u8,
     pub g: u8,
     pub r: u8,
@@ -159,7 +159,7 @@ impl Capturer {
         }
     }
 
-    pub fn capture_frame(&mut self) -> Result<Vec<RGB8>, CaptureError> {
+    pub fn capture_frame(&mut self) -> Result<Vec<Bgr8>, CaptureError> {
         let image_ptr = unsafe {
             xlib::XGetImage(*self.window_conn.display,
                             self.window_conn.window,
@@ -179,8 +179,8 @@ impl Capturer {
                    image.red_mask == 0xFF0000 && image.green_mask == 0xFF00 &&
                    image.blue_mask == 0xFF {
 
-                    // It's plain (RGB8 + padding)s in memory
-                    let raw_img_data = slice::from_raw_parts(image.data as *mut RGB8,
+                    // It's plain (Bgr8 + padding)s in memory
+                    let raw_img_data = slice::from_raw_parts(image.data as *mut Bgr8,
                                                              image.width as usize *
                                                              image.height as usize)
                         .to_vec();
