@@ -151,12 +151,17 @@ pub enum CaptureSource {
     Monitor(usize),
 }
 
+#[derive(Clone, Copy)]
+pub struct Geometry {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 pub struct Capturer {
     window_conn: WindowConnection,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
+    geo: Geometry,
 }
 impl Capturer {
     pub fn new(capture_src: CaptureSource) -> Result<Capturer, ()> {
@@ -177,24 +182,30 @@ impl Capturer {
 
                 Ok(Capturer {
                     window_conn: conn,
-                    width: w,
-                    height: h,
-                    x: x,
-                    y: y,
+                    geo: Geometry {
+                        width: w,
+                        height: h,
+                        x: x,
+                        y: y,
+                    },
                 })
             }
             Err(_) => Err(()),
         }
     }
 
+    pub fn get_geometry(&self) -> Geometry {
+        self.geo
+    }
+
     pub fn capture_frame(&mut self) -> Result<Vec<Bgr8>, CaptureError> {
         let image_ptr = unsafe {
             xlib::XGetImage(*self.window_conn.display,
                             self.window_conn.window,
-                            self.x,
-                            self.y,
-                            self.width,
-                            self.height,
+                            self.geo.x,
+                            self.geo.y,
+                            self.geo.width,
+                            self.geo.height,
                             AllPlanes,
                             ZPixmap)
         };

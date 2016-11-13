@@ -12,7 +12,8 @@ fn main() {
     loop {
         let ps = capturer.capture_frame().unwrap();
 
-        let size = 1920 * 1080;
+        let geo = capturer.get_geometry();
+        let size = geo.width as u64 * geo.height as u64;
 
         let (mut tot_r, mut tot_g, mut tot_b) = (0, 0, 0);
 
