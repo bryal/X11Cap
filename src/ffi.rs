@@ -20,9 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//! FFI bindings for functions related to SHM, shared memory
-
-use libc::{ c_int, c_ulong };
+use libc::{c_int, c_ulong};
 
 pub const XYBitmap: c_int = 0;
 pub const XYPixmap: c_int = 1;

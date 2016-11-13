@@ -32,7 +32,7 @@ use ffi::*;
 use x11::xlib;
 use libc::c_int;
 use std::ffi::CString;
-use std::ptr::{ self, Unique };
+use std::ptr::{self, Unique};
 use std::slice;
 
 pub mod ffi;
@@ -40,154 +40,163 @@ pub mod ffi;
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 #[repr(C, packed)]
 pub struct RGB8 {
-	r: u8,
-	g: u8,
-	b: u8,
+    pub b: u8,
+    pub g: u8,
+    pub r: u8,
+    _pad: u8,
 }
 
 pub enum Display {
-	Address(&'static str),
-	Default
+    Address(&'static str),
+    Default,
 }
 
 #[derive(Clone, Copy)]
 pub enum Screen {
-	Specific(c_int),
-	Default
+    Specific(c_int),
+    Default,
 }
 
 #[derive(Clone, Copy)]
 pub enum Window {
-	Window(xlib::Window),
-	Desktop
+    Window(xlib::Window),
+    Desktop,
 }
 
 struct WindowConnection {
-	display: Unique<xlib::Display>,
-	window: xlib::Window,
-	width: u32, height: u32,
+    display: Unique<xlib::Display>,
+    window: xlib::Window,
+    width: u32,
+    height: u32,
 }
 impl WindowConnection {
-	fn new(display: Display, screen: Screen, window: Window) -> Result<WindowConnection, ()> {
-		let display_ptr = unsafe {
-			Unique::new(xlib::XOpenDisplay(if let Display::Address(address) = display {
-				match CString::new(address) {
-					Ok(s) => s.as_ptr(),
-					Err(_) => return Err(())
-				}
-			} else {
-				ptr::null()
-			}))
-		};
+    fn new(display: Display, screen: Screen, window: Window) -> Result<WindowConnection, ()> {
+        let display_ptr = unsafe {
+            Unique::new(xlib::XOpenDisplay(if let Display::Address(address) = display {
+                match CString::new(address) {
+                    Ok(s) => s.as_ptr(),
+                    Err(_) => return Err(()),
+                }
+            } else {
+                ptr::null()
+            }))
+        };
 
-		if !display_ptr.is_null() {
-			let screen_num = if let Screen::Specific(n) = screen {
-				n
-			} else {
-				unsafe { xlib::XDefaultScreen(*display_ptr) }
-			};
+        if !display_ptr.is_null() {
+            let screen_num = if let Screen::Specific(n) = screen {
+                n
+            } else {
+                unsafe { xlib::XDefaultScreen(*display_ptr) }
+            };
 
-			let mut window_id = if let Window::Window(id) = window {
-				id
-			} else {
-				unsafe { xlib::XRootWindow(*display_ptr, screen_num) }
-			};
+            let mut window_id = if let Window::Window(id) = window {
+                id
+            } else {
+                unsafe { xlib::XRootWindow(*display_ptr, screen_num) }
+            };
 
-			let (mut window_width, mut window_height) = (0, 0);
+            let (mut window_width, mut window_height) = (0, 0);
 
-			if unsafe { xlib::XGetGeometry(*display_ptr, window_id,
-				&mut window_id,
-				&mut 0, &mut 0,
-				&mut window_width, &mut window_height, &mut 0,
-				&mut 0) != 0
-			}{
-				Ok(WindowConnection{
-					display: display_ptr,
-					window: window_id,
-					width: window_width, height: window_height,
-				})
-			} else {
-				Err(())
-			}
-		} else {
-			Err(())
-		}
-	}
+            if unsafe {
+                xlib::XGetGeometry(*display_ptr,
+                                   window_id,
+                                   &mut window_id,
+                                   &mut 0,
+                                   &mut 0,
+                                   &mut window_width,
+                                   &mut window_height,
+                                   &mut 0,
+                                   &mut 0) != 0
+            } {
+                Ok(WindowConnection {
+                    display: display_ptr,
+                    window: window_id,
+                    width: window_width,
+                    height: window_height,
+                })
+            } else {
+                Err(())
+            }
+        } else {
+            Err(())
+        }
+    }
 }
 impl Drop for WindowConnection {
-	fn drop(&mut self) {
-		unsafe {
-			xlib::XCloseDisplay(*self.display);
-		}
-	}
+    fn drop(&mut self) {
+        unsafe {
+            xlib::XCloseDisplay(*self.display);
+        }
+    }
 }
 
 /// Possible errors when capturing
 #[derive(Debug)]
 pub enum CaptureError {
-	Fail(&'static str),
+    Fail(&'static str),
 }
 
 pub struct Capturer {
-	screen: Screen,
-	window_conn: WindowConnection,
+    window_conn: WindowConnection,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
 }
 impl Capturer {
-	pub fn new(screen: Screen) -> Result<Capturer, ()> {
-		match WindowConnection::new(Display::Default, screen, Window::Desktop) {
-			Ok(conn) => Ok(Capturer{ screen: screen, window_conn: conn }),
-			Err(_) => Err(()),
-		}
-	}
+    pub fn new(x: i32, y: i32, width: u32, height: u32) -> Result<Capturer, ()> {
+        match WindowConnection::new(Display::Default, Screen::Default, Window::Desktop) {
+            Ok(conn) => {
+                Ok(Capturer {
+                    window_conn: conn,
+                    width: width,
+                    height: height,
+                    x: x,
+                    y: y,
+                })
+            }
+            Err(_) => Err(()),
+        }
+    }
 
-	fn connect(&mut self) -> Result<(), ()> {
-		match WindowConnection::new(Display::Default, self.screen, Window::Desktop) {
-			Ok(conn) => {
-				self.window_conn = conn;
-				Ok(())
-			},
-			Err(_) => Err(()),
-		}	
-	}
+    pub fn capture_frame(&mut self) -> Result<(Vec<RGB8>, (u32, u32)), CaptureError> {
+        let image_ptr = unsafe {
+            xlib::XGetImage(*self.window_conn.display,
+                            self.window_conn.window,
+                            self.x,
+                            self.y,
+                            self.width,
+                            self.height,
+                            AllPlanes,
+                            ZPixmap)
+        };
 
-	pub fn capture_frame(&mut self) -> Result<(Vec<RGB8>, (u32, u32)), CaptureError> {
-		let image_ptr = unsafe { xlib::XGetImage(*self.window_conn.display, self.window_conn.window,
-			0, 0,
-			self.window_conn.width, self.window_conn.height,
-			AllPlanes, ZPixmap) };
+        if !image_ptr.is_null() {
+            let image = unsafe { &mut *image_ptr };
 
-		if !image_ptr.is_null() {
-			let image = unsafe { &mut *image_ptr };
+            unsafe {
+                if image.depth == 24 && image.bits_per_pixel == 32 &&
+                   image.red_mask == 0xFF0000 && image.green_mask == 0xFF00 &&
+                   image.blue_mask == 0xFF {
 
-			unsafe { if image.depth == 24 && image.bits_per_pixel == 32 &&
-				image.red_mask == 0xFF0000 && image.green_mask == 0xFF00 && image.blue_mask == 0xFF
-			{
-				// It's plain (RGB8 + padding)s in memory
-				let raw_img_data = slice::from_raw_parts(image.data as *mut (RGB8, u8),
-					image.width as usize * image.height as usize
-				).iter()
-					.map(|&(pixel, _)| pixel)
-					.collect();
+                    let (width, height) = (image.width, image.height);
 
-				xlib::XFree(image_ptr as *mut _);
+                    // It's plain (RGB8 + padding)s in memory
+                    let raw_img_data = slice::from_raw_parts(image.data as *mut RGB8,
+                                                             width as usize * height as usize)
+                        .to_vec();
 
-				Ok((raw_img_data, (image.width as u32, image.height as u32)))
-			} else {
-				xlib::XFree(image_ptr as *mut _);
+                    xlib::XDestroyImage(image_ptr);
 
-				Err(CaptureError::Fail("WRONG LAYOUT"))
-			} }
-		} else {
-			Err(CaptureError::Fail("XGetImage returned null pointer"))
-		}
-	}
-}
+                    Ok((raw_img_data, (width as u32, height as u32)))
+                } else {
+                    xlib::XDestroyImage(image_ptr as *mut _);
 
-#[test]
-fn test() {
-	let mut capturer = Capturer::new(Screen::Default).unwrap();
-	for _ in 0..10 {
-		println!("Any non-black: {}", capturer.capture_frame().unwrap().0.iter()
-			.any(|p| p.r != 0 || p.g != 0 || p.b != 0));
-	}
+                    Err(CaptureError::Fail("WRONG LAYOUT"))
+                }
+            }
+        } else {
+            Err(CaptureError::Fail("XGetImage returned null pointer"))
+        }
+    }
 }

@@ -8,7 +8,11 @@ documentation = "http://bryal.github.io/X11Cap/x11cap/"
 readme = "README.md"
 keywords = ["X11", "X", "screen", "record", "capture"]
 license = "MIT"
+build = "build.rs"
 
 [dependencies]
 x11 = "*"
 libc = "*"
+
+[dev-dependencies]
+shuteye = "0.2.0"
