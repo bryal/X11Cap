@@ -1,6 +1,6 @@
 [package]
 name = "x11cap"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["bryal <96.bryal@gmail.com>"]
 description = "Screen capture with X11 in Rust"
 repository = "https://github.com/bryal/X11Cap"
@@ -11,8 +11,8 @@ license = "MIT"
 build = "build.rs"
 
 [dependencies]
-x11 = "*"
-libc = "*"
+x11 = "2.11"
+libc = "0.2"
 
 [dev-dependencies]
-shuteye = "0.2.0"
+shuteye = "0.2"
