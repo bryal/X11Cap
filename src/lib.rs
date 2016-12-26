@@ -29,11 +29,11 @@ extern crate x11;
 extern crate libc;
 
 use ffi::*;
-use x11::{xlib, xrandr};
 use libc::c_int;
 use std::ffi::CString;
 use std::ptr::{self, Unique};
 use std::slice;
+use x11::{xlib, xrandr};
 
 pub mod ffi;
 
@@ -46,19 +46,19 @@ pub struct Bgr8 {
     _pad: u8,
 }
 
-pub enum Display {
+enum Display {
     Address(&'static str),
     Default,
 }
 
 #[derive(Clone, Copy)]
-pub enum Screen {
+enum Screen {
     Specific(c_int),
     Default,
 }
 
 #[derive(Clone, Copy)]
-pub enum Window {
+enum Window {
     Window(xlib::Window),
     Desktop,
 }
@@ -159,6 +159,36 @@ pub struct Geometry {
     pub height: u32,
 }
 
+/// A captured image
+///
+/// Wrapper that guarantees correct destruction
+#[derive(Debug)]
+pub struct Image {
+    image: *mut xlib::XImage,
+}
+
+impl Image {
+    pub fn as_slice(&self) -> &[Bgr8] {
+        // It's plain (Bgr8 + padding)s in memory
+        unsafe {
+            slice::from_raw_parts((*self.image).data as *const _,
+                                  (*self.image).width as usize * (*self.image).height as usize)
+        }
+    }
+
+    pub fn get_dimensions(&self) -> (u32, u32) {
+        unsafe { ((*self.image).width as u32, (*self.image).height as u32) }
+    }
+}
+
+impl Drop for Image {
+    fn drop(&mut self) {
+        unsafe {
+            xlib::XDestroyImage(self.image);
+        }
+    }
+}
+
 pub struct Capturer {
     window_conn: WindowConnection,
     geo: Geometry,
@@ -198,7 +228,7 @@ impl Capturer {
         self.geo
     }
 
-    pub fn capture_frame(&mut self) -> Result<Vec<Bgr8>, CaptureError> {
+    pub fn capture_frame(&mut self) -> Result<Image, CaptureError> {
         let image_ptr = unsafe {
             xlib::XGetImage(*self.window_conn.display,
                             self.window_conn.window,
@@ -218,19 +248,13 @@ impl Capturer {
                    image.red_mask == 0xFF0000 && image.green_mask == 0xFF00 &&
                    image.blue_mask == 0xFF {
 
-                    // It's plain (Bgr8 + padding)s in memory
-                    let raw_img_data = slice::from_raw_parts(image.data as *mut Bgr8,
-                                                             image.width as usize *
-                                                             image.height as usize)
-                        .to_vec();
+                    let image = Image { image: image_ptr };
 
-                    xlib::XDestroyImage(image_ptr);
-
-                    Ok(raw_img_data)
+                    Ok(image)
                 } else {
                     xlib::XDestroyImage(image_ptr as *mut _);
 
-                    Err(CaptureError::Fail("WRONG LAYOUT"))
+                    Err(CaptureError::Fail("Wrong layout"))
                 }
             }
         } else {
