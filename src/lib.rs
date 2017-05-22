@@ -22,7 +22,6 @@
 
 //! Capture the screen with xlib
 
-#![feature(unique)]
 #![allow(dead_code, non_upper_case_globals)]
 
 extern crate x11;
@@ -31,8 +30,7 @@ extern crate libc;
 use ffi::*;
 use libc::c_int;
 use std::ffi::CString;
-use std::ptr::{self, Unique};
-use std::slice;
+use std::{slice, ptr};
 use x11::{xlib, xrandr};
 
 pub mod ffi;
@@ -64,7 +62,7 @@ enum Window {
 }
 
 struct WindowConnection {
-    display: Unique<xlib::Display>,
+    display: *mut xlib::Display,
     window: xlib::Window,
     width: u32,
     height: u32,
@@ -83,24 +81,24 @@ impl WindowConnection {
             ptr::null()
         };
 
-        let display_ptr = Unique::new(xlib::XOpenDisplay(addr));
+        let display_ptr = xlib::XOpenDisplay(addr);
 
         if !display_ptr.is_null() {
             let screen_num = if let Screen::Specific(n) = screen {
                 n
             } else {
-                xlib::XDefaultScreen(*display_ptr)
+                xlib::XDefaultScreen(display_ptr)
             };
 
             let mut window_id = if let Window::Window(id) = window {
                 id
             } else {
-                xlib::XRootWindow(*display_ptr, screen_num)
+                xlib::XRootWindow(display_ptr, screen_num)
             };
 
             let (mut window_width, mut window_height) = (0, 0);
 
-            let geo_result = xlib::XGetGeometry(*display_ptr,
+            let geo_result = xlib::XGetGeometry(display_ptr,
                                                 window_id,
                                                 &mut window_id,
                                                 &mut 0,
@@ -128,7 +126,7 @@ impl WindowConnection {
 impl Drop for WindowConnection {
     fn drop(&mut self) {
         unsafe {
-            xlib::XCloseDisplay(*self.display);
+            xlib::XCloseDisplay(self.display);
         }
     }
 }
@@ -202,7 +200,7 @@ impl Capturer {
                     CaptureSource::Monitor(mon_i) => {
                         let mut n_mons = 0;
                         let mons = unsafe {
-                            xrandr::XRRGetMonitors(*conn.display, conn.window, 1, &mut n_mons)
+                            xrandr::XRRGetMonitors(conn.display, conn.window, 1, &mut n_mons)
                         };
                         let mons = unsafe { slice::from_raw_parts_mut(mons, n_mons as usize) };
                         let mon = mons[mon_i];
@@ -230,7 +228,7 @@ impl Capturer {
 
     pub fn capture_frame(&mut self) -> Result<Image, CaptureError> {
         let image_ptr = unsafe {
-            xlib::XGetImage(*self.window_conn.display,
+            xlib::XGetImage(self.window_conn.display,
                             self.window_conn.window,
                             self.geo.x,
                             self.geo.y,
